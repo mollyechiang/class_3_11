@@ -1,0 +1,112 @@
+---
+title: "National Election Survey"
+author: "David Kane"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(rstanarm)
+library(tidybayes)
+library(tidyverse)
+
+load("nes.rda")
+```
+
+```{r clean_data}
+# This data is a mess. Where is the code book? Is this real NES data or some bs
+# made up sample? This is a really good place to write down some thoughts on
+# this data and where it comes from. Take a look at ROAS, pages 141 -- 142.
+
+# We are trying to explain partyid7, which is the party identification of each
+# respondent. Can we treat this as continuous? I think that lower numbers mean
+# more Democratic.
+
+# real_ideo is missing a lot. Should we just get rid of those rows? Depends on
+# the time period we care about . . .
+
+x <- nes %>% 
+  as_tibble() %>% 
+  select(year, partyid7, real_ideo, race_adj, 
+         age_discrete, educ1, female, income) %>% 
+  drop_na() %>% 
+  mutate(gender = as.factor(ifelse(female == 1, "female", "non-female"))) %>% 
+  mutate(race = as.factor(case_when(race_adj == 1 ~ "White",
+                                    race_adj == 2 ~ "Black",
+                                    TRUE ~ "Other"))) %>% 
+  select(-female, -race_adj)
+  
+```
+
+```{r model_1, cache=TRUE}
+fit_1 <- stan_glm(data = x, partyid7 ~ gender + race + real_ideo, refresh = 0)
+
+fit_1_lm <- lm(data = x, partyid7 ~ gender + race + real_ideo)
+
+```
+
+```{r show_model, comment=NA}
+fit_1
+
+summary(fit_1_lm)
+```
+
+The sigma value is the residual standard deviation. Sigma indicates party_id7 will be within plus or minus the sigma value of its linear predictor value 68% of the time, and within 2*sigma of the linear predictor value approximatley 95% of the time.
+
+
+Evaluating how good a model is:
+  - R^2 - increases with just using more variables - but is a way of evaluating model fit (higher R^2 means points are really close to line) - distance of the residuals 
+      - making a fit that hits every single point - overfitting, can't be used on new data - 
+  - fake data simulation ... - not good i forget why
+  - another idea - train model on half the data (k-fold)
+      - partitions data into k subsets - train data on each of the parts and test it on the others 
+          - model is refit k times - each time leaving out one k subsets 
+      - kfold() - exact K-fold cross-validation
+      - leave one out model fitting - kfold with giant k - leave out each point 
+      
+```{r leave one out, cache = TRUE}
+
+loo_1 <- loo(fit_1)
+
+```
+
+elpd_loo = estimated log score
+    - score closer to 0 is better (better model)
+    - log of probability of outcome y given predictors x 
+    - how different your estimate is from the truth (want them to be similar in a good model)
+p_loo = estimated effective number of parameters
+looic = loo information criterion
+    - elpd_loo * -2
+
+these variables really make more sense when comparing two models to eachother (higher vs lower elpd_loo) instead of just interpreting the magnitude of the variables on their own
+
+bigger elpd_loo magnitude is worse!!! bc that means the fitted line is farther from the true data 
+
+```{r model 2}
+
+fit_2 <- stan_glm(data = x, partyid7 ~ age_discrete + educ1, refresh = 0)
+
+loo_2 <- loo(fit_2)
+
+```
+
+```{r comparison}
+
+loo_compare(loo_1, loo_2)
+
+```
+
+```{r visualizing model}
+
+fit_1 %>%
+  spread_draws(`(Intercept)`) %>%
+  median_qi(condition_mean = `(Intercept)` + b) %>%
+  ggplot(aes(y = group, x = condition_mean, xmin = .lower, xmax = .upper)) +
+  geom_pointintervalh()
+
+```
+
+
+
+
